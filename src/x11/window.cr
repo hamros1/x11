@@ -892,6 +892,103 @@ def keypress(e : PEvent)
 	end
 end
 
+def killclient(arg)
+	return if !selmon.sel
+	if !sendevent(selmon.sel, wmatom[WMDelete])
+		LibX11.grab_server(dpy)
+		LibX11.set_error_handler(xerrordummy)
+		LibX11.set_close_down_mode(dpy, DestroyAll)
+		LibX11.kill_client(dpy, selmon.sel.win)
+		LibX11.sync(dpy, False)
+		LibX11.set_error_handler(xerror)
+		LibX11.ungrab_server(dpy)
+	end
+end
+
+def manage(w : LibX11::Window, wa : LibX11.WindowAttributes)
+	trans = None.as(LibX11::Window)
+	wc = LibX11::WindowChanges
+
+	c = Pointer.malloc(1, sizeof(Client))
+	c.win = w
+	updatetitle(c)
+	if (LibX11.get_transient_for_hint(dpy, w, pointerof(trans)) && (t = wintoclient(trans)))
+		c.mon = t.mon
+		c.tags = t.tags
+	else
+		c.mon = selmon
+		applyrules(c)
+	end
+	c.x = c.oldx = wa.x
+	c.y = c.oldy = wa.y
+	c.w = c.oldw = wa.width
+	c.h = c.oldh = wa.height
+	c.oldw = wa.border_width
+
+	if c.x = width(c) > c.mon.mx + c.mon.mw
+	end
+	if c.y + height(c) > c.mon.my + c.mon.mh
+	end
+	c.x = max(c.x, c.mon.mx)
+	c.y = max(c.y, ((c.mon.by == c.mon.my) && (c.x + (c.w / 2 + 2) >= c.mon.wx)
+					 && (c.x + (c.w / 2) < c.mon.wx + c.mon.ww)) ? bh : c.mon.my)
+	c.bw = borderpx
+	wc.border_width = c.bw
+	LibX11.configure_window(dpy, w, CWBorderWidth, pointerof(wc))
+	LibX11.set_window_border(dpy, w, scheme[SchemeNorm].border.pix)
+	configure(c)
+	updatewindowtype(c)
+	updatesizehints(c)
+	updatewmhints(c)
+	LibX11.select_input(dpy, w, LibX11::EnterWindowMask|LibX11::FocusChangeMask|LibX11::PropertyChangeMask|LibX11::StructureNotifyMask)
+	grabbuttons(c)
+	if !c.isfloating
+		c.isfloating = c.oldstate = trans != None || c.isfixed
+	end
+	if c.isfloating
+		LibX11.raise_window(dpy, c.win)
+	end
+	attach(c)
+	attachstack(c)
+	LibX11.change_property(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend, pointerof(c.win).as(LibC::UChar*), 1)
+	LibX11.move_resize_window(dpy, c.win, c.x + 2 * sw, c.y, c.w, c.h)
+	setclientstate(c, NormalState)
+	if c.mon == selmon
+		unfocus(selmon.sel, 0)
+	end
+	c.mon.sel = c
+	arrange(c.mon)
+	LibX11.map_window(dpy, c.win)
+	focus(nil)
+end
+
+def maprequest(e : PEvent)
+	wa = LibX11::WindowAttributes
+	ev = LibX11.MapRequestEvent(pointerof(e.xmaprequest))
+
+	return if !LibX11.get_window_attributes(dpy, ev.window, pointerof(wa))
+	return if !wa.override_redirect
+	if !wintoclient(ev.window)
+		manage(ev.window, pointerof(wa))
+	end
+end
+
+def motionnotify(e : PEvent)
+	mon = Pointer(Monitor).null
+	m = Pointer(Monitor)
+	ev = Pointer(LibX11::MotionEvent.new(pointerof(e.xmotion)))
+
+	if ev.window != root
+		return
+	end
+	if ((m = recttomon(ev.x_root, ev.y_root, 1, 1)) != mon && mon)
+		unfocus(selmon.sel, 1)
+		selmon = m
+		focus(nil)
+	end
+	mon = m
+end
+
 def getcolor(Char* colstr)
 	cmap = LibX11.default_colormap(dpy, screen)
 	color = LibX11.Color.new(0)
