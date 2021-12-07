@@ -1069,3 +1069,384 @@ def pop(c : PClient)
 	focus c
 	arrange c.mon
 end
+
+def propertynotify(e : Event)
+	ev = LibX11::PropertyEvent.new(pointerof(e.xproperty))
+
+	if ev.window == root && ev.atom == XA_WM_NAME
+		updatestatus
+	else if ev.state == PropertyDelete
+		return
+	else if c = wintoclient(ev.window)
+		case ev.atom
+		when XA_WM_TRANSIENT_FOR
+			if (!c.isfloating && LibX11.get_transient_for_hint(dpy, c.win, pointerof(trans)) && c.isfloating = (wintoclient(trans)) != nil)
+				arrange(c.mon)
+			end
+			break
+		when XA_WA_NORMAL_HINTS
+			updatesizehints(c)
+			break
+		when XA_WM_HINTS
+			updatewmhints(c)
+			drawbars
+			break
+		end
+		if ev.atom == XA_WM_NAME || ev.atom == netatom[NetWMName]
+			updatetitle(c)
+			if c == c.mon.sel
+				drawbar(c.mon)
+			end
+		end
+		if ev.atom == netatom[NetWMWindowType]
+			updatewindowtype(c)
+		end
+	end
+end
+
+def quit(arg : PArg)
+	running = 0
+end
+
+def recttomon(x, y, w, h)
+	m, r = selmon
+	a, area = 0
+
+	until !m
+		if ((a = intersect(x, y, w, h, m)) > area)
+			area = a
+			r = m
+		end
+		m.next
+	end
+end
+
+def resize(c : PClient, x, y, w, h, interact)
+	if applysizehints(c, pointerof(x), pointerof(y), pointerof(w), pointerof(h), interact)
+		resizeclient(c, x, y, w, h)
+	end
+end
+
+def resizeclient(c : PClient, x, y, w, h)
+	wc = LibX11::WindowChanges
+
+	c.oldx = c.x
+	c.x = wc.x = x
+
+	c.oldy = c.y
+	c.y = wc.y = y
+
+	c.oldw = c.w
+	c.w = wc.width = w
+	
+	c.oldh = c.h
+	c.h = wc.height = h
+
+	wc.border_width = c.bw
+	LibX11.configure_window(dpy, c.win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, pointerof(wc))
+	configure(c)
+	LibX11.sync(dpy, False)
+end
+
+def resizemouse(arg : PArg)
+	ocx, ocy, nw, nh = 0
+	c = PClient
+	m = PMonitor
+	ev = LibX11::Event
+	lasttime = 0.as(Time)
+
+	if (!(c = selmon.sel))
+		return
+	end
+	if c.isfullscreen
+		return
+	end
+	restack(selmon)
+	ocx = c.x
+	ocy = c.y
+	if (LibX11.grab_pointer(dpy, root, False, MOUSEMASK, LibX11.GrabModeAsync, LibX11.GrabModeAsync, None, cursor[CurResize].cursor, CurrentTime) != LibX11.GrabSuccess)
+		return
+	end
+	LibX11.warp_pointer(dpy, None, c.win, 0, 0, 0, 0, c.w + c.bw - 1, c.h + c.bw - 1)
+	while
+		LibX11.mask_event(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, pointerof(ev))
+		case ev.type
+		when ConfigureRequest
+		when Expose
+		when MapRequest
+			handler[ev.type] pointerof(ev)
+		when MotionNotify
+			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+				next
+			end
+
+			nw = max(ev.xmotion.x - ocx - 2 * c.bw + 1, 1)
+			nh = max(ev.xmotion.y - ocy -2 * c.bw + 1, 1)
+			if (c.mon.wx + nw >= selmon.wx && c.mon.wx + nw <= selmon.wx + selmon.ww && c.mon.wy + nh >= selmon.wy && c.mon.wy + nh <= selmon.wy + selmon.wh)
+				if (!c.isfloating && selmon.lt[selmon.sellt].arrange && (abs(nw - c.w) > snap || abs(nh - c.h) > snap))
+					togglefloating(nil)
+				end
+			end
+			if (!selmon.lt[selmon.sellt].arrange || c.isfloating)
+				resize(c, c.x, c.y, nw, nh, 1)
+			end
+			break
+		end
+		if ev.type != ButtonRelease
+			break
+		end
+	end
+	LibX11.warp_pointer(dpy, None, c.win, 0, 0, 0, 0, c.w + c.bw - 1, c.h + c.bw - 1)
+	LibX11.ungrab_pointer(dpy, CurrentTime)
+	while LibX11.check_mask_event(dpy, EnterWindowMask, pointerof(ev))
+		sendmon(c, m)
+		selmon = m
+		focus(nil)
+	end
+end
+
+def restack(m : PMonitor)
+	c = PClient
+	ev = Event
+	wc = LibX11::WindowChanges
+
+	drawbar(m)
+	if !m.sel
+		return
+	end
+	if m.sel.isfloating || !m.lt[m.sellt].arrange
+		LibX11.raise_window(dpy, m.sel.win)
+	end
+	if m.lt[m.sellt].arrange
+		wc.stack_mode = Below
+		wc.sibling = m.barwin
+		c = m.stack
+		until !c
+			if !c.isfloating && isvisible(c)
+				LibX11.configure_window(dpy, c.win, CWSIbling|CWStackMode, pointerof(wc))
+				wc.sibling = c.win
+			end
+		end
+	end
+	LibX11.sync(dpy, False)
+	while LibX11.check_mask_event(dpy, EnterWindowMask, pointerof(ev))
+	end
+end
+
+def run
+	ev = LibX11::Event
+	LibX11.sync(dpy, False)
+	while running && LibX11.NextEvent(dpy, pointerof(ev))
+		if handler[ev.type]
+			handler[ev.type](pointerof(ev))
+		end
+	end
+end
+
+def scan
+	i, num = 0
+	d1, d2, wins = Pointer(LibX11::Window).null
+	wa = LibX11::WindowAttributes
+	if LibX11.query_tree(dpy, root, pointerof(d1), pointerof(d2), pointerof(wins), pointerof(num))
+		i = 0
+		while i < num
+			if (!LibX11.get_window_attributes(dpy, win[i], pointerof(wa)) || wa.override_redirect || LibX11.get_transient_for_hint(dpy, wins[i], pointerof(d1))
+			 next
+			end
+			if (wa.map_state == IsViewable || getstate(wins[i]) == IconicState)
+				manage(wins[i], &wa)
+			end
+			i++
+		end
+		i = 0
+		while i < num
+			if !LibX11.get_window_attributes(dpy, wins[i], pointerof(wa))
+				next
+			end
+			if (LibX11.get_transient_for_hint(dpy, wins[i] pointerof(d1)) && (wa.map_state == IsViewable || getstate(wins[i]) == IconicState))
+				manage(wins[i], pointerof(wa))
+			end
+			i++
+		end
+		if wins
+			LibX11.free(wins)
+		end
+	end
+end
+
+def sendmon(c : PClient, m = PMonitor)
+	if c.mon == m
+		return
+	end
+	unfocus(c, 1)
+	detach(c)
+	detachstack(c)
+	c.mon = m
+	c.tags = m.tagset[m.seltags]
+	attach(c)
+	focus(nil)
+	arrange(nil)
+end
+
+def setclientstate(c : PClient, state)
+	data = [state, None]
+	LibX11.change_property(dpy, c.win, wmatom[WMState], wmatom[WMState], 32, PropModeRplace, data.as(LibC::UChar*), 2)
+end
+
+def sendevent(c : PClient, proto : Atom)
+	protocols = Pointer(Atom)
+	exists = 0
+
+	if LibX11.get_wm_protocols(dpy, c.win, pointerof(protocols), pointerof(n))
+		while !exists && n--
+				exists = protocols[n] == proto
+		end
+		LibX11.free(protocols)
+	end
+	if exists
+		ev.type = ClientMessage
+		ev.xclient.window = c.win
+		ev.xclient.message_type = wmatom[WMProtocols]
+		ev.xclient.format = 32
+		ev.xclient.data.l[0] = proto
+		ev.xclient.data.l[1] = CurrentTime
+		LibX11.send_event(dpy. c.win, False, NoEventMask, &ev)
+	end 
+	return exists
+end
+
+def setfocus(c : PClient)
+	if !c.neverfoucs
+		LibX11.set_input_focus(dpy, c.win, RevertToPointRoot, CurrentTime)
+		LibX11.change_property(dpy, root, netatom[NetActiveWindow], XA_WINDOW, 32, PropModeReplace, pointerof(c.win).as(LibC::UChar*), 1)
+	end
+	sendevent(c, wmatom[WMTakeFocus])
+end
+
+def setfullscreen(c : PClient, !c.isfullscreen)
+	if fullscreen && !c.isfullscreen
+		LibX11.change_property(dpy, c.win, netatom[NetWMState], XA_ATOM, 32, PropModeReplace, pointerof(netatom[NetWMFullscreen], 1))
+		c.isfullscreen = 1
+		c.oldstate = c.isfloating
+		c.oldbw = c.bw
+		c.bw = 0
+		c.isfloating = 1
+		resizeclient(c, c.mon.mx, c.mon.mw, c.mon.mw, c.mon.mh)
+		LibX11.raise_window(dpy, c.win)
+	else if !fullscreen && c.isfullscreen
+		LibX11.change_property(dpy, c.win, netatom[NetWMState], XA_ATOM, 32, PropModeReplace, 0.as(LibC::UChar*), 0)
+		c.isfullscreen = 0
+		c.isfloating = c.oldstate
+		c.bw = c.oldbw
+		c.x = c.oldx
+		c.y = c.oldy
+		c.w = c.oldw
+		c.h = c.oldh
+		resizeclient(c, c.x, c.y, c.w, c.h)
+		arrange(c.mon)
+	end
+end
+
+def setlayout(arg : PArg)
+	if !arg || !arg.v || arg.v != selmon.lt[selmon.sellt]
+		selmon.pertag.sellts[selmon.pertag.curtag] ^= 1
+		selmon.sellt = selmon.pertag.sellts[selmon.pertag.curtag]
+	end
+	if arg && arg.v
+		selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellt] = arg.v.as(Pointer(Layout))
+	end
+	selmon.lt[selmon.sellt] = selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellt]
+	LibC.strncpy(selmon.ltsymbol, selmon.lt[selmon.sellt].symbol, sizeof(selmon.ltsymbol))
+	if selmon.sel
+		arrange(selmon)
+	else
+		drawbar(selmon)
+	end
+end
+
+def setmfact(arg : PArg)
+	if !arg || !selmon.lt[selmon.sellt].arrange
+		return 
+	end
+	f = arg.f < 1.0 ? arg.f + selmon.mfact : arg.f - 1.0
+	if f < 0.1 || f > 0.9
+		return
+	end
+	selmon.mfact = selmon.pertag.mfacts[selmon.pertag.curtag] = f
+	arrange(selmon)
+end
+
+def showhide
+	if !c
+		return
+	end
+	if isvisible(c)
+		LibX11.move_window(dpy, c.win, c.x, c.y)
+		if ((!c.mon.lt[c.mon.sellt].arrange || c.isfloating) && !c.isfullscreen)
+			resize(c, c.x, c.y, c.w, c.h, 0)
+		end
+		showhide(c.snext)
+	else
+		showhide(c.snext)
+		LibX11.move_window(dpy, c.win, width(c) * -2, c.y)
+	end
+end
+
+def tag(arg : PArg)
+	if selmon.sel && arg.ui & TAGMASK
+		selmon.sel.tags = arg.ui & TAGMASK
+		focus(nil)
+		arrange(selmon)
+	end
+end
+
+def tagmon(m : PMonitor)
+	if !selmon.sel || !mons.next
+		return
+	end
+	sendmon(selmon.sel, dirtomon(arg.i))
+end
+
+def tile(m : PMonitor)
+	c = nexttiled(m.clients)
+	n = 0
+	while c
+		c = nexttiled(c.next)
+		n++
+	end
+	if n  > m.nmaster
+		mw = m.nmaster ? m.ww * m.mfact : 0
+	else
+		mw = m.ww
+	end
+	
+	i = my = ty = 0
+	c = nexttiled(m.clients)
+	while c
+		if < m.nmaster
+			h = (m.wh - my) / (min(n, m.nmaster) -i)
+			resize(c, m.wx, m.wy + my, mw - (2*c.bw), h - (2*c.bw), 0)
+			my += height(c)
+		else
+			h = (m.wh - ty) / (n - i)
+			resize(c, m.wx + mw, m.ww - mw - (2*c.bw), h - (2*c.bw), 0)
+			ty += height(c)
+		end
+		c = nexttiled(c.next)
+		i++
+	end
+end
+
+def togglefloating(arg : PArg)
+	if !selmon.sel
+		return
+	end
+	if selmon.sel.isfullscreen
+		return
+	end
+	selmon.sel.isfloating = !selmon.sel.isfloating || selmon.sel.isfixed
+	if selmon.sel.isfloating
+		resize(selmon.sel, selmon.sel.x, selmon.sel.y, selmon.sel.w, selmon.sel.h, 0)
+	end
+	arrange(selmon)
+end
