@@ -1,0 +1,9 @@
+name: wm
+version: 0.1.0
+
+authors:
+  - Hampus Andreas Niklas Rosencrantz <hamros@tuta.io>
+
+targets:
+  wm:
+    main: src/main.cr
