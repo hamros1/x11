@@ -1450,3 +1450,339 @@ def togglefloating(arg : PArg)
 	end
 	arrange(selmon)
 end
+
+def toggletag(arg : PArg)
+	if !selmon.sel
+		return
+	end
+	newtags = selmon.sel.tags ^ (arg.ui & TAGMASK)
+	if newtags
+		selmon.sel.tags = newtags
+		focus(nil)
+		arrange(selmon)
+	end
+end
+
+def toggleview(arg : PArg)
+	newtagset = selmon.tagset[selmon.seltags] ^ (arg.ui & TAGMASK)
+
+	if newtagset == ~0
+		selmon.pertag.prevtag = selmon.pertag.curtag
+		selmon.pertag.curtag = 0
+	end
+
+	if (!(newtagset & 1 << (selmon.pertag.curtag -1)))
+		selmon.pertag.prevtag = selmon.pertag.curtag
+		i = 0
+		while !(newtagset & 1 << i)
+			i++
+		end
+		selmon.pertag.curtag = i + 1
+	end
+	selmon.tagset[selmon.seltags] = newtagset
+
+	selmon.nmaster = selmon.pertag.nmasters[selmon.pertag.curtag]
+	selmon.mfact = selmon.pertag.mfacts[selmon.pertag.curtag]
+	selmon.sellt = selmon.pertag.sellts[selmon.pertag.curtag]
+	selmon.lt[selmon.sellt] = selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellt]
+	selmon.lt[selmon.sellt^1] = selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellt^1]
+	if selmon.showbar != selmon.pertag.showbars[selmon.pertag.curtag]
+		togglebar(nil)
+	end
+	focus(nil)
+	arrange(selmon)
+end
+
+def unfocus(c : PClient, setfocus)
+	if !c
+		return
+	end
+	grabbuttons(c, 0)
+	LibX11.set_window_border(dpy, c.win, scheme[SchemeNorm].border.pix)
+	if setfocus
+		LibX11.set_input_focus(dpy, root, RevertToPointerRoot, CurrentTime)
+		LibX11.delete_property(dpy, root, netatom[NetActiveWindow])
+	end
+end
+
+def unmanage(c : PClient, destroyed)
+	m = c.mon
+	wc = LibX11::WindowChanges
+
+	detach(c)
+	detachstack(c)
+	if !destroyed
+		wc.border_width = c.oldw
+		LibX11.grab_server(dpy)
+		LibX11.set_error_handler(xerrordummy)
+		LibX11.configure_window(dpy, c.win, CWBorderWidth, pointerof(wc))
+		LibX11.ungrab_button(dpy, AnyButton, AnyModifier, c.win)
+		setclientstate(c, WithdrawnState)
+		LibX11.sync(dpy, False)
+		LibX11.set_error_handler(xerror)
+		LibX111.ungrab_server(dpy)
+	end
+	free(c)
+	focus(nil)
+	updateclientlist
+	arrange(m)
+end
+
+def unmapnotify(e : PEvent)
+	ev = Pointer(LibX11::UnmapEvent.new(pointerof(ev.window)))
+
+	if c = wintoclient(ev.window)
+		if ev.send_event
+			setclientstate(c, WithdrawnState)
+		else
+			unmanage(c, 0)
+		end
+	end
+end
+
+def updatebars
+	wa = LibX11::SetWindowAttributes.new(override_redirect: True, background_pixmap: ParentRelative, event_mask: ButtonPressMask|ExposureMask)
+	m = mons
+	while m
+		if m.barwin
+			next
+		end
+		m.barwin = LibX11.create_window(dpy, root, m.wx, m.ww, m.by, m.ww, bh, 0, DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen), CWOverrideRedirect|CWBackPixmap,CWEventMask, pointerof(wa))
+		LibX11.define_cursor(dpy, m.barwin, cursor[CurNormal].cursor)
+		LibX11.map_raised(dpy, m.barwin)
+		m.next
+	end
+end
+
+def updatebarpos(m : PMonitor)
+	m.wy = m.my
+	m.wh = m.mh
+	if m.showbar
+		m.wh -= bh
+		m.by = m.topbar ? m.wy : m.wy ? m.wh
+		m.wy = m.topbar ? m.wy + bh : m.wy
+	else
+		m.by = -bh
+	end
+end
+
+def updateclientlist
+	LibX11.delete_property(dpy, root, netatom[NetClientList])
+	m = mons
+	while m
+		m.clients.each do |c|
+			LibX11.change_property(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend, pointerof(c.win).as(LibC::UChar*), 1)
+		end
+		m = m.next
+	end
+end
+
+def updategeom
+	if !mons
+		mons = createmon
+	end
+	if mons.mw != sw || mons.mh != sh
+		diry = 1
+		mons.mw = mons.ww = sw
+		mons.mh = mons.wh = sh
+		updatebarpos(mons)
+	end
+	if dirty
+		selmon = mons
+		selmon = wintomon(root)
+	end
+	return dirty
+end
+
+def updatenumlockmask
+	numlockmask = 0
+	modmap = LibX11.get_modifier_mapping(dpy)
+	8.times do |i|
+		modmap.max_keypermod.times do |j|
+			if modmap.modifiermap[i * modmap.max_keypermod + j] == LibX11.keysym_to_keycode(dpy, XK_Num_Lock)
+				numlockmask = (1 << i)
+			end
+		end
+	end
+	LibX11.free_modifier_map(modmap)
+end
+
+def updatesizehints(c : PClient)
+	if LibX11.get_wm_normal_hints(dpy, c.win, pointerof(size), pointerof(msize))
+		size.flags = PSize
+	end
+	if size.flags & PBaseSize
+		c.basew = size.base_width
+		c.baseh = size.base_height
+	else if size.flags & PMinSize
+		c.basew = size.min_width
+		c.baseh = size.min_height
+	else
+		c.basew = c.baseh = 0
+	end
+	if size.flags & PResizeInc
+		c.incw = size.width_inc
+		c.inch = size.height_inc
+	else
+		c.incw = c.inch = 0
+	end
+	if size.flags & PMaxSize
+		c.maxw = size.max_width
+		c.maxh = size.max_height
+	else
+		c.minw = c.minh = 0
+	end
+	if size.flags & PAspect
+		c.mina = size.min_aspect.y / size.min_aspect.x
+		c.maxa = size.max_aspect.x / size.max_aspect.y
+	else
+		c.maxa = c.mina = 0.0
+	end
+	c.isfixed = c.maxw && c.minw && c.maxh && c.minh && c.maw == c.minw && c.maxh = c.minh
+end
+
+def updatetitle(c : PClient)
+	if !gettextprop(c.win, netatom[NetWMName], c.name, sizeof(c.name))
+		gettextprop(c.win, XA_WM_NAME, c.name, sizeof(c.name))
+	end
+	if c.name[0] == '\0'
+		LibC.strcpy(c.name, broken)
+	end
+end
+
+def updatestatus
+	drawbar(selmon)
+end
+
+def updatewindowtype(c : PClient)
+	Atom state = getatomprop(c, netatom[NetWMState])
+	Atom wtype = getatomprop(cl, netatom[NetWMWindowType])
+
+	if state == netatom[NetWMFullscreen]
+		setfullscreen(c, 1)
+	end
+	if wtype == netatom[NetWMWindowTypeDialog]
+		c.isfloating = 1
+	end
+end
+
+def updatewmhints(c : PClient)
+	if wmh = LibX11.get_wm_hints(dpy, c.win)
+		if c = selmon.sel && wmh.flags & LibX11.UrgencyHint
+			wmh.flags &= ~LibX11.UrgencyHint
+			LibX11.set_wm_hints(dpy, c.win, wmh)
+		else
+			c.isurgent = wmh.flags & LibX11.UrgencyHint ? 1 : 0
+		end
+		if wmh.flags & InputHint
+			c.neverfocus = !wmh.input
+		else
+			c.neverfocus = 0
+		end
+		LibX11.free(wmh)
+	end
+end
+
+def view(arg : Arg)
+	if (arg.ui & TAGMASK) == selmon.tagset[selmon.seltags]
+		return
+	end
+	selmon.seltags ^= 1
+	if arg.ui & TAGMASK
+		selmon.pertag.prevtag = selmon.pertag.curtag
+		selmon.tagset[selmon.seltags] = arg.ui & TAGMASK
+		if arg.ui == ~0
+			selmon.pertag.curtag = 0
+		else
+			i = 0
+			while !(arg.ui & 1 << i)
+				selmon.pertag.curtag = i + 1
+				i++
+			end
+		end
+	else
+		tmptag = selmon.pertag.prevtag
+		selmon.pertag.prevtag = selmon.pertag.curtag
+		selmon.pertag.curtag = tmptag
+	end
+	selmon.nmaster = selmon.pertag.nmasters[selmon.pertag.curtag]
+	selmon.mfact = selmon.pertag.mfacts[selmon.pertag.curtag]
+	selmon.sellt = selmon.pertag.sellts[selmon.pertag.curtag]
+	selmon.lt[sellt] = selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellts]
+	selmon.lt[selmon.sellt^1] = selmon.pertag.ltidxs[selmon.pertag.curtag][selmon.sellt^1]
+	if selmon.showbar != selmon.pertag.showbar[selmon.pertag.curtag]
+		togglebar(nil)
+	end
+	focus(nil)
+	arrange(selmon)
+end
+
+def wintoclient(w : Window)
+	m = mons
+	while m
+		c = m.clients
+		while c
+			if c.win == w
+				return c
+			end
+			c = c.next
+		end
+		m.next
+	end
+	return nil
+end
+
+def wintomon(w : Window)
+	if w == root && getrootptr(pointerof(x), pointerof(y))
+		return recttomon(x, y, 1, 1)
+	end
+	m = mons
+	while m
+		if w == m.barwin
+			return m
+		end
+		m.next
+	end
+	if c = wintoclient(w)
+		return c.mon
+	end
+	return selmon
+end
+
+def xerror(dpy, ee)
+	if (ee.error_code == BadWindow
+	|| (ee.request_code == LibX11::SetInputFocus && ee.error_code == BadMatch)
+	|| (ee.request_code == LibX11::PolyText8 && ee.error_code == BadDrawable)
+	|| (ee.request_code == LibX11::PolyFillRectangle && ee.error_code == BadDrawable)
+	|| (ee.request_code == LibX11::PolySegment && ee.error_code == BadDrawable)
+	|| (ee.request_code == LibX11::ConfigureWindow && ee.error_code == BadMatch)
+	|| (ee.request_code == LibX11::GrabButton && ee.error_code == BadAccess)
+	|| (ee.request_code == LibX11::GrabKey && ee.error_code == BadAccess)
+	|| (ee.request_code == LibX11::CopyArea && ee.error_code == BadDrawable))
+		return 0
+	end
+	return xerrorxlib(dpy, ee)
+end
+
+def xerrordummy(dpy : PDisplay, ee : PErrorEvent)
+	return 0
+end
+
+def xerrorstart(dpy : PDisplay, ee : PErrorEvent)
+	die("")
+	return -1
+end
+
+def zoom(Arg : PArg)
+	c = selmon.sel
+
+	if (selmon.lt[selmon.sellt].arrange || (selmon.sel && selmon.sel.isfloating))
+		return
+	end
+	if c == nexttiled(selmon.clients)
+		if !c || !(c = nexttiled(c.next))
+			return
+		end
+	end
+	pop(c)
+end
