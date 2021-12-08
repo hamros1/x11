@@ -736,6 +736,9 @@ lib LibX11
 		same_screen : Bool
 	end
 
+	alias ButtonPressedEvent = ButtonEvent
+	alias ButtonReleasedEvent = ButtonEvent
+
 	struct MotionEvent
 		type : LibC::Int
 		serial : LibC::ULong
@@ -1725,4 +1728,13 @@ lib LibX11
 	fun process_internal_connection : XProcessInternalConnection(x0 : Display*, x1 : LibC::Int) : Void
 	fun add_connection_watch : XAddConnectionWatch(x0 : Display*, x1 : ConnectionWatchProc, x2 : Pointer) : LibC::Int
 	fun remove_connection_watch : XRemoveConnectionWatch(x0 : Display*, x1 : ConnectionWatchProc, x2 : Pointer) : Void
+	fun set_size_hints : XSetSizeHints(x0 : Display*, x1 : Window, x2 : x3 : SizeHints*, x4 : Atom) : LibC::Int
+	fun set_wm_hints : XSetWMHints(x0 : Display*, x1 : Window, x2 : WMHints*) : LibC::Int
+	fun set_zoom_hints : XSetZoomHints(x0 : Display*, x1 : Window, x2 : SizeHints*) : LibC::Int
+	fun set_normal_hints : XSetNormalHints(x0 : Display*, x1 : Window, x2 : SizeHints*) : LibC::Int
+	fun set_icon_sizes : XSetIconSizes(x0 : Display*, x1 : Window, x2 : IconSize*) : LibC::Int
+	fun set_command : XSetCommand(x0 : Display*, x1 : Window, x2 : LibC::Char**, x3 : LibC::Int) : LibC::Int
+	fun set_standard_properties : XSetStandardProperties(x0 : Display*, x1 : Window, x2 : LibC::Char*, x3 : LibC::Char*, x4 : Pixmap, x5 : LibC::Char**, x6 : LibC::Int, x7 : SizeHints*) : LibC::Int
+	fun set_transient_for_hint : XSetTransientForHint(x0 : Display*, x1 : Window, x2 : Window) : LibC::Int
+	fun set_class_hint : XSetClassHint(x0 : Display*, x1 : Window, x2 : ClassHint*) : LibC::Int
 end
